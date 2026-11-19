@@ -1,0 +1,53 @@
+{
+  "id": "lendloopErrors01",
+  "name": "LendLoop — sanitized automation errors",
+  "active": false,
+  "nodes": [
+    {
+      "id": "errors-trigger",
+      "name": "Automation error",
+      "type": "n8n-nodes-base.errorTrigger",
+      "typeVersion": 1,
+      "position": [
+        0,
+        0
+      ],
+      "parameters": {}
+    },
+    {
+      "id": "errors-log",
+      "name": "Record sanitized error",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        240,
+        0
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "// LendLoop isolated exercise source.\nconst data = $input.first().json;\n// Never log stack traces, original payloads, headers, environment, or arbitrary error messages.\nconst failure = { event: 'lendloop.automation.failed', workflowId: String(data.workflow?.id || 'unknown').slice(0, 100), executionId: String(data.execution?.id || 'unknown').slice(0, 100), failedNode: String(data.execution?.lastNodeExecuted || 'trigger').slice(0, 100), at: new Date().toISOString(), action: 'Inspect saved failed execution in restricted n8n editor; retry only after correction. Convex write-backs are idempotent.' };\nconsole.error(JSON.stringify(failure));\nreturn [{ json: failure }];\n"
+      }
+    }
+  ],
+  "connections": {
+    "Automation error": {
+      "main": [
+        [
+          {
+            "node": "Record sanitized error",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "timezone": "UTC",
+    "executionTimeout": 120,
+    "saveDataSuccessExecution": "none",
+    "saveDataErrorExecution": "all",
+    "saveManualExecutions": false
+  }
+}

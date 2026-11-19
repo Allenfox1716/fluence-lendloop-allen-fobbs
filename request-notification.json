@@ -1,0 +1,197 @@
+{
+  "id": "lendloopRequest1",
+  "name": "LendLoop — request notification (logged mock)",
+  "active": false,
+  "nodes": [
+    {
+      "id": "request-webhook",
+      "name": "Signed request event",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2.1,
+      "position": [
+        0,
+        0
+      ],
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "lendloop/requests",
+        "responseMode": "responseNode",
+        "options": {
+          "rawBody": true
+        }
+      },
+      "webhookId": "lendloop-requests-v1"
+    },
+    {
+      "id": "request-verify",
+      "name": "Verify signed event",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        240,
+        0
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "// Embedded into the exported Code nodes by build-workflows.mjs.\nconst { createHmac, timingSafeEqual, randomUUID } = require('crypto');\nfunction secret() {\n  const value = $env.AUTOMATION_SHARED_SECRET;\n  if (typeof value !== 'string' || value.length < 32) throw new Error('Automation secret is not configured');\n  return value;\n}\nfunction record(value) { return value !== null && typeof value === 'object' && !Array.isArray(value); }\nfunction text(value, max = 200) { return typeof value === 'string' && value.length > 0 && value.length <= max; }\nfunction apiBase() {\n  const value = $env.CONVEX_SITE_URL;\n  if (typeof value !== 'string') throw new Error('Convex HTTP base URL is not configured');\n  if (/^https:\\/\\/[a-zA-Z0-9.-]+(?::[0-9]{1,5})?\\/?$/.test(value)) return value.replace(/\\/$/, '');\n  if ($env.AUTOMATION_ALLOW_LOCAL_HTTP === 'true' && /^http:\\/\\/(?:localhost|127\\.0\\.0\\.1|host\\.docker\\.internal)(?::[0-9]{1,5})?\\/?$/.test(value)) return value.replace(/\\/$/, '');\n  throw new Error('Valid HTTPS Convex HTTP base URL required');\n}\nfunction signed(path, payload) {\n  const rawBody = JSON.stringify(payload);\n  const timestamp = String(Math.floor(Date.now() / 1000));\n  const signature = createHmac('sha256', secret()).update(timestamp + '.').update(rawBody).digest('hex');\n  return { url: apiBase() + path, rawBody, timestamp, signature };\n}\n\n\n// LendLoop isolated exercise source.\n// Require Webhook > Raw Body. Never reconstruct signed bytes from parsed JSON.\nconst input = $input.first();\nconst headers = input.json.headers || {};\nconst timestamp = headers['x-lendloop-timestamp'];\nconst signature = headers['x-lendloop-signature'];\nif (!/^[0-9]{10}$/.test(timestamp || '') || !/^[a-f0-9]{64}$/.test(signature || '')) throw new Error('Invalid automation authentication');\nif (Math.abs(Math.floor(Date.now() / 1000) - Number(timestamp)) > 300) throw new Error('Expired automation authentication');\nif (!input.binary?.data) throw new Error('Raw webhook body is required');\nconst raw = await this.helpers.getBinaryDataBuffer(0, 'data');\nif (raw.length > 16384) throw new Error('Automation payload is too large');\nconst expected = createHmac('sha256', secret()).update(timestamp + '.').update(raw).digest();\nif (!timingSafeEqual(expected, Buffer.from(signature, 'hex'))) throw new Error('Invalid automation authentication');\nlet event;\ntry { event = JSON.parse(raw.toString('utf8')); } catch { throw new Error('Invalid automation JSON'); }\nconst kinds = new Set(['request.created', 'request.approved', 'request.declined', 'request.returned', 'request.cancelled']);\nconst statuses = new Set(['pending', 'approved', 'declined', 'returned', 'cancelled']);\nif (!record(event) || event.version !== 1 || !text(event.eventId) || !text(event.loanId) || !text(event.recipientUserId) || !text(event.toolName, 100) || !kinds.has(event.kind) || !statuses.has(event.status) || !Number.isFinite(event.createdAt)) throw new Error('Invalid automation event');\n// Drop inbound headers, raw bytes, and unknown fields before later nodes/logging.\nreturn [{ json: { version: 1, eventId: event.eventId, loanId: event.loanId, kind: event.kind, toolName: event.toolName, recipientUserId: event.recipientUserId, status: event.status, createdAt: event.createdAt } }];\n\n"
+      }
+    },
+    {
+      "id": "request-log",
+      "name": "Log notification and sign acknowledgement",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        500,
+        0
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "// Embedded into the exported Code nodes by build-workflows.mjs.\nconst { createHmac, timingSafeEqual, randomUUID } = require('crypto');\nfunction secret() {\n  const value = $env.AUTOMATION_SHARED_SECRET;\n  if (typeof value !== 'string' || value.length < 32) throw new Error('Automation secret is not configured');\n  return value;\n}\nfunction record(value) { return value !== null && typeof value === 'object' && !Array.isArray(value); }\nfunction text(value, max = 200) { return typeof value === 'string' && value.length > 0 && value.length <= max; }\nfunction apiBase() {\n  const value = $env.CONVEX_SITE_URL;\n  if (typeof value !== 'string') throw new Error('Convex HTTP base URL is not configured');\n  if (/^https:\\/\\/[a-zA-Z0-9.-]+(?::[0-9]{1,5})?\\/?$/.test(value)) return value.replace(/\\/$/, '');\n  if ($env.AUTOMATION_ALLOW_LOCAL_HTTP === 'true' && /^http:\\/\\/(?:localhost|127\\.0\\.0\\.1|host\\.docker\\.internal)(?::[0-9]{1,5})?\\/?$/.test(value)) return value.replace(/\\/$/, '');\n  throw new Error('Valid HTTPS Convex HTTP base URL required');\n}\nfunction signed(path, payload) {\n  const rawBody = JSON.stringify(payload);\n  const timestamp = String(Math.floor(Date.now() / 1000));\n  const signature = createHmac('sha256', secret()).update(timestamp + '.').update(rawBody).digest('hex');\n  return { url: apiBase() + path, rawBody, timestamp, signature };\n}\n\n\n// LendLoop isolated exercise source.\nconst event = $input.first().json;\n// Deliberate logged mock channel; this is not email/SMS delivery.\nconsole.log(JSON.stringify({ event: 'lendloop.notification.logged_mock', eventId: event.eventId, loanId: event.loanId, recipientUserId: event.recipientUserId, kind: event.kind, status: event.status, toolName: event.toolName }));\nconst request = signed('/automation/ack', { version: 1, eventId: event.eventId, outcome: 'logged' });\nreturn [{ json: request }];\n\n"
+      }
+    },
+    {
+      "id": "request-ack",
+      "name": "Persist notification acknowledgement",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        780,
+        0
+      ],
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $json.url }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "content-type",
+              "value": "application/json"
+            },
+            {
+              "name": "x-lendloop-timestamp",
+              "value": "={{ $json.timestamp }}"
+            },
+            {
+              "name": "x-lendloop-signature",
+              "value": "={{ $json.signature }}"
+            }
+          ]
+        },
+        "sendBody": true,
+        "contentType": "raw",
+        "rawContentType": "application/json",
+        "body": "={{ $json.rawBody }}",
+        "options": {
+          "timeout": 10000,
+          "response": {
+            "response": {
+              "responseFormat": "json"
+            }
+          }
+        }
+      },
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 1000
+    },
+    {
+      "id": "request-confirm",
+      "name": "Confirm durable acknowledgement",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1040,
+        0
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "// Embedded into the exported Code nodes by build-workflows.mjs.\nconst { createHmac, timingSafeEqual, randomUUID } = require('crypto');\nfunction secret() {\n  const value = $env.AUTOMATION_SHARED_SECRET;\n  if (typeof value !== 'string' || value.length < 32) throw new Error('Automation secret is not configured');\n  return value;\n}\nfunction record(value) { return value !== null && typeof value === 'object' && !Array.isArray(value); }\nfunction text(value, max = 200) { return typeof value === 'string' && value.length > 0 && value.length <= max; }\nfunction apiBase() {\n  const value = $env.CONVEX_SITE_URL;\n  if (typeof value !== 'string') throw new Error('Convex HTTP base URL is not configured');\n  if (/^https:\\/\\/[a-zA-Z0-9.-]+(?::[0-9]{1,5})?\\/?$/.test(value)) return value.replace(/\\/$/, '');\n  if ($env.AUTOMATION_ALLOW_LOCAL_HTTP === 'true' && /^http:\\/\\/(?:localhost|127\\.0\\.0\\.1|host\\.docker\\.internal)(?::[0-9]{1,5})?\\/?$/.test(value)) return value.replace(/\\/$/, '');\n  throw new Error('Valid HTTPS Convex HTTP base URL required');\n}\nfunction signed(path, payload) {\n  const rawBody = JSON.stringify(payload);\n  const timestamp = String(Math.floor(Date.now() / 1000));\n  const signature = createHmac('sha256', secret()).update(timestamp + '.').update(rawBody).digest('hex');\n  return { url: apiBase() + path, rawBody, timestamp, signature };\n}\n\n\n// LendLoop isolated exercise source.\nconst acknowledgement = $input.first().json;\nif (!record(acknowledgement) || acknowledgement.ok !== true || typeof acknowledgement.duplicate !== 'boolean') throw new Error('Convex notification acknowledgement was not confirmed');\nconst event = $('Verify signed event').first().json;\nreturn [{ json: { ok: true, eventId: event.eventId, notificationMode: 'logged_mock', duplicate: acknowledgement.duplicate } }];\n\n"
+      }
+    },
+    {
+      "id": "request-response",
+      "name": "Respond after persistence",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.4,
+      "position": [
+        1300,
+        0
+      ],
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ $json }}",
+        "options": {
+          "responseCode": 200
+        }
+      }
+    }
+  ],
+  "connections": {
+    "Signed request event": {
+      "main": [
+        [
+          {
+            "node": "Verify signed event",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Verify signed event": {
+      "main": [
+        [
+          {
+            "node": "Log notification and sign acknowledgement",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Log notification and sign acknowledgement": {
+      "main": [
+        [
+          {
+            "node": "Persist notification acknowledgement",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Persist notification acknowledgement": {
+      "main": [
+        [
+          {
+            "node": "Confirm durable acknowledgement",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Confirm durable acknowledgement": {
+      "main": [
+        [
+          {
+            "node": "Respond after persistence",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "timezone": "UTC",
+    "executionTimeout": 120,
+    "saveDataSuccessExecution": "none",
+    "saveDataErrorExecution": "all",
+    "saveManualExecutions": false,
+    "errorWorkflow": "lendloopErrors01"
+  }
+}

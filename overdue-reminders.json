@@ -1,0 +1,400 @@
+{
+  "id": "lendloopOverdue1",
+  "name": "LendLoop — daily overdue reminders (logged mock)",
+  "active": false,
+  "nodes": [
+    {
+      "id": "overdue-schedule",
+      "name": "Daily at 09 UTC",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        0,
+        0
+      ],
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "cronExpression",
+              "expression": "0 9 * * *"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "overdue-manual",
+      "name": "Manual controlled run",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [
+        0,
+        180
+      ],
+      "parameters": {}
+    },
+    {
+      "id": "overdue-sign",
+      "name": "Sign overdue query",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        250,
+        0
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "// Embedded into the exported Code nodes by build-workflows.mjs.\nconst { createHmac, timingSafeEqual, randomUUID } = require('crypto');\nfunction secret() {\n  const value = $env.AUTOMATION_SHARED_SECRET;\n  if (typeof value !== 'string' || value.length < 32) throw new Error('Automation secret is not configured');\n  return value;\n}\nfunction record(value) { return value !== null && typeof value === 'object' && !Array.isArray(value); }\nfunction text(value, max = 200) { return typeof value === 'string' && value.length > 0 && value.length <= max; }\nfunction apiBase() {\n  const value = $env.CONVEX_SITE_URL;\n  if (typeof value !== 'string') throw new Error('Convex HTTP base URL is not configured');\n  if (/^https:\\/\\/[a-zA-Z0-9.-]+(?::[0-9]{1,5})?\\/?$/.test(value)) return value.replace(/\\/$/, '');\n  if ($env.AUTOMATION_ALLOW_LOCAL_HTTP === 'true' && /^http:\\/\\/(?:localhost|127\\.0\\.0\\.1|host\\.docker\\.internal)(?::[0-9]{1,5})?\\/?$/.test(value)) return value.replace(/\\/$/, '');\n  throw new Error('Valid HTTPS Convex HTTP base URL required');\n}\nfunction signed(path, payload) {\n  const rawBody = JSON.stringify(payload);\n  const timestamp = String(Math.floor(Date.now() / 1000));\n  const signature = createHmac('sha256', secret()).update(timestamp + '.').update(rawBody).digest('hex');\n  return { url: apiBase() + path, rawBody, timestamp, signature };\n}\n\n\n// LendLoop isolated exercise source.\nconst prior = $input.first().json;\nconst batchNo = Number.isInteger(prior.batchNo) ? prior.batchNo : 0;\nconst runId = text(prior.runId) ? prior.runId : randomUUID();\nif (batchNo < 0 || batchNo >= 20) throw new Error('Daily reminder batch limit reached; inspect remaining backlog and run again');\nreturn [{ json: { ...signed('/automation/overdue', { version: 1, requestId: runId + ':' + batchNo, limit: 50 }), runId, batchNo } }];\n\n"
+      }
+    },
+    {
+      "id": "overdue-fetch",
+      "name": "Fetch overdue loans",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        500,
+        0
+      ],
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $json.url }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "content-type",
+              "value": "application/json"
+            },
+            {
+              "name": "x-lendloop-timestamp",
+              "value": "={{ $json.timestamp }}"
+            },
+            {
+              "name": "x-lendloop-signature",
+              "value": "={{ $json.signature }}"
+            }
+          ]
+        },
+        "sendBody": true,
+        "contentType": "raw",
+        "rawContentType": "application/json",
+        "body": "={{ $json.rawBody }}",
+        "options": {
+          "timeout": 10000,
+          "response": {
+            "response": {
+              "responseFormat": "json"
+            }
+          }
+        }
+      },
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 1000
+    },
+    {
+      "id": "overdue-validate",
+      "name": "Validate overdue batch",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        750,
+        0
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "// Embedded into the exported Code nodes by build-workflows.mjs.\nconst { createHmac, timingSafeEqual, randomUUID } = require('crypto');\nfunction secret() {\n  const value = $env.AUTOMATION_SHARED_SECRET;\n  if (typeof value !== 'string' || value.length < 32) throw new Error('Automation secret is not configured');\n  return value;\n}\nfunction record(value) { return value !== null && typeof value === 'object' && !Array.isArray(value); }\nfunction text(value, max = 200) { return typeof value === 'string' && value.length > 0 && value.length <= max; }\nfunction apiBase() {\n  const value = $env.CONVEX_SITE_URL;\n  if (typeof value !== 'string') throw new Error('Convex HTTP base URL is not configured');\n  if (/^https:\\/\\/[a-zA-Z0-9.-]+(?::[0-9]{1,5})?\\/?$/.test(value)) return value.replace(/\\/$/, '');\n  if ($env.AUTOMATION_ALLOW_LOCAL_HTTP === 'true' && /^http:\\/\\/(?:localhost|127\\.0\\.0\\.1|host\\.docker\\.internal)(?::[0-9]{1,5})?\\/?$/.test(value)) return value.replace(/\\/$/, '');\n  throw new Error('Valid HTTPS Convex HTTP base URL required');\n}\nfunction signed(path, payload) {\n  const rawBody = JSON.stringify(payload);\n  const timestamp = String(Math.floor(Date.now() / 1000));\n  const signature = createHmac('sha256', secret()).update(timestamp + '.').update(rawBody).digest('hex');\n  return { url: apiBase() + path, rawBody, timestamp, signature };\n}\n\n\n// LendLoop isolated exercise source.\nconst result = $input.first().json;\nconst context = $('Sign overdue query').first(0, $runIndex).json;\nif (!record(result) || !Array.isArray(result.loans) || result.loans.length > 50 || typeof result.more !== 'boolean') throw new Error('Invalid overdue-loan response');\nif (result.more && result.loans.length === 0) throw new Error('Overdue response indicated more results without progress');\nconst today = new Date().toISOString().slice(0, 10);\nconst ids = new Set();\nfor (const loan of result.loans) {\n  if (!record(loan) || !text(loan.loanId) || !text(loan.borrowerId) || !text(loan.toolName, 100) || !/^\\d{4}-\\d{2}-\\d{2}$/.test(loan.endDate || '') || !text(loan.reminderKey, 250) || loan.reminderKey !== loan.loanId + ':' + today || ids.has(loan.loanId)) throw new Error('Invalid overdue-loan item');\n  if (new Date(loan.endDate + 'T00:00:00Z').toISOString().slice(0, 10) !== loan.endDate || loan.endDate >= today) throw new Error('Loan is not overdue');\n  ids.add(loan.loanId);\n}\n// Keep only the fields used by notification and idempotent write-back.\nreturn [{ json: { loans: result.loans.map(({ loanId, toolName, borrowerId, endDate, reminderKey }) => ({ loanId, toolName, borrowerId, endDate, reminderKey })), more: result.more, count: result.loans.length, runId: context.runId, batchNo: context.batchNo } }];\n\n"
+      }
+    },
+    {
+      "id": "overdue-has",
+      "name": "Has overdue loans?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        1000,
+        0
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "overdue-has-condition",
+              "leftValue": "={{ $json.count }}",
+              "rightValue": 0,
+              "operator": {
+                "type": "number",
+                "operation": "gt",
+                "singleValue": false
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "overdue-log",
+      "name": "Log reminders and sign write-backs",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1250,
+        -100
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "// Embedded into the exported Code nodes by build-workflows.mjs.\nconst { createHmac, timingSafeEqual, randomUUID } = require('crypto');\nfunction secret() {\n  const value = $env.AUTOMATION_SHARED_SECRET;\n  if (typeof value !== 'string' || value.length < 32) throw new Error('Automation secret is not configured');\n  return value;\n}\nfunction record(value) { return value !== null && typeof value === 'object' && !Array.isArray(value); }\nfunction text(value, max = 200) { return typeof value === 'string' && value.length > 0 && value.length <= max; }\nfunction apiBase() {\n  const value = $env.CONVEX_SITE_URL;\n  if (typeof value !== 'string') throw new Error('Convex HTTP base URL is not configured');\n  if (/^https:\\/\\/[a-zA-Z0-9.-]+(?::[0-9]{1,5})?\\/?$/.test(value)) return value.replace(/\\/$/, '');\n  if ($env.AUTOMATION_ALLOW_LOCAL_HTTP === 'true' && /^http:\\/\\/(?:localhost|127\\.0\\.0\\.1|host\\.docker\\.internal)(?::[0-9]{1,5})?\\/?$/.test(value)) return value.replace(/\\/$/, '');\n  throw new Error('Valid HTTPS Convex HTTP base URL required');\n}\nfunction signed(path, payload) {\n  const rawBody = JSON.stringify(payload);\n  const timestamp = String(Math.floor(Date.now() / 1000));\n  const signature = createHmac('sha256', secret()).update(timestamp + '.').update(rawBody).digest('hex');\n  return { url: apiBase() + path, rawBody, timestamp, signature };\n}\n\n\n// LendLoop isolated exercise source.\nconst batch = $input.first().json;\nreturn batch.loans.map((loan) => {\n  console.log(JSON.stringify({ event: 'lendloop.reminder.logged_mock', loanId: loan.loanId, borrowerId: loan.borrowerId, toolName: loan.toolName, endDate: loan.endDate, reminderKey: loan.reminderKey }));\n  return { json: signed('/automation/reminders', { version: 1, loanId: loan.loanId, reminderKey: loan.reminderKey, outcome: 'logged' }) };\n});\n\n"
+      }
+    },
+    {
+      "id": "overdue-write",
+      "name": "Persist reminder results",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1500,
+        -100
+      ],
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $json.url }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "content-type",
+              "value": "application/json"
+            },
+            {
+              "name": "x-lendloop-timestamp",
+              "value": "={{ $json.timestamp }}"
+            },
+            {
+              "name": "x-lendloop-signature",
+              "value": "={{ $json.signature }}"
+            }
+          ]
+        },
+        "sendBody": true,
+        "contentType": "raw",
+        "rawContentType": "application/json",
+        "body": "={{ $json.rawBody }}",
+        "options": {
+          "timeout": 10000,
+          "response": {
+            "response": {
+              "responseFormat": "json"
+            }
+          }
+        }
+      },
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 1000
+    },
+    {
+      "id": "overdue-advance",
+      "name": "Confirm results and advance batch",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1750,
+        -100
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "// Embedded into the exported Code nodes by build-workflows.mjs.\nconst { createHmac, timingSafeEqual, randomUUID } = require('crypto');\nfunction secret() {\n  const value = $env.AUTOMATION_SHARED_SECRET;\n  if (typeof value !== 'string' || value.length < 32) throw new Error('Automation secret is not configured');\n  return value;\n}\nfunction record(value) { return value !== null && typeof value === 'object' && !Array.isArray(value); }\nfunction text(value, max = 200) { return typeof value === 'string' && value.length > 0 && value.length <= max; }\nfunction apiBase() {\n  const value = $env.CONVEX_SITE_URL;\n  if (typeof value !== 'string') throw new Error('Convex HTTP base URL is not configured');\n  if (/^https:\\/\\/[a-zA-Z0-9.-]+(?::[0-9]{1,5})?\\/?$/.test(value)) return value.replace(/\\/$/, '');\n  if ($env.AUTOMATION_ALLOW_LOCAL_HTTP === 'true' && /^http:\\/\\/(?:localhost|127\\.0\\.0\\.1|host\\.docker\\.internal)(?::[0-9]{1,5})?\\/?$/.test(value)) return value.replace(/\\/$/, '');\n  throw new Error('Valid HTTPS Convex HTTP base URL required');\n}\nfunction signed(path, payload) {\n  const rawBody = JSON.stringify(payload);\n  const timestamp = String(Math.floor(Date.now() / 1000));\n  const signature = createHmac('sha256', secret()).update(timestamp + '.').update(rawBody).digest('hex');\n  return { url: apiBase() + path, rawBody, timestamp, signature };\n}\n\n\n// LendLoop isolated exercise source.\nconst acknowledgements = $input.all();\nconst batch = $('Validate overdue batch').first(0, $runIndex).json;\nif (acknowledgements.length !== batch.count || acknowledgements.some(({ json }) => !record(json) || json.ok !== true || typeof json.duplicate !== 'boolean')) throw new Error('One or more reminder write-backs were not confirmed');\nreturn [{ json: { runId: batch.runId, batchNo: batch.batchNo + 1, more: batch.more, completedBatchCount: batch.count, notificationMode: 'logged_mock' } }];\n\n"
+      }
+    },
+    {
+      "id": "overdue-more",
+      "name": "More overdue loans?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        2000,
+        -100
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "overdue-more-condition",
+              "leftValue": "={{ $json.more }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "overdue-finish",
+      "name": "Finished bounded reminder run",
+      "type": "n8n-nodes-base.noOp",
+      "typeVersion": 1,
+      "position": [
+        2250,
+        100
+      ],
+      "parameters": {}
+    }
+  ],
+  "connections": {
+    "Daily at 09 UTC": {
+      "main": [
+        [
+          {
+            "node": "Sign overdue query",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Manual controlled run": {
+      "main": [
+        [
+          {
+            "node": "Sign overdue query",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Sign overdue query": {
+      "main": [
+        [
+          {
+            "node": "Fetch overdue loans",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fetch overdue loans": {
+      "main": [
+        [
+          {
+            "node": "Validate overdue batch",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Validate overdue batch": {
+      "main": [
+        [
+          {
+            "node": "Has overdue loans?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Has overdue loans?": {
+      "main": [
+        [
+          {
+            "node": "Log reminders and sign write-backs",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Finished bounded reminder run",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Log reminders and sign write-backs": {
+      "main": [
+        [
+          {
+            "node": "Persist reminder results",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Persist reminder results": {
+      "main": [
+        [
+          {
+            "node": "Confirm results and advance batch",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Confirm results and advance batch": {
+      "main": [
+        [
+          {
+            "node": "More overdue loans?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "More overdue loans?": {
+      "main": [
+        [
+          {
+            "node": "Sign overdue query",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Finished bounded reminder run",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "timezone": "UTC",
+    "executionTimeout": 1200,
+    "saveDataSuccessExecution": "none",
+    "saveDataErrorExecution": "all",
+    "saveManualExecutions": false,
+    "errorWorkflow": "lendloopErrors01"
+  }
+}
